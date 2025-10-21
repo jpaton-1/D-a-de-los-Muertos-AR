@@ -262,6 +262,36 @@
             display: flex;
         }
 
+        /* Camera switch button */
+        #camera-switch {
+            position: fixed;
+            top: 30px;
+            right: 90px;
+            z-index: 10000;
+            padding: 10px 20px;
+            border-radius: 22px;
+            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+            border: none;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(255, 107, 53, 0.4);
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        
+        #camera-switch.show {
+            display: flex;
+        }
+        
+        #camera-switch:active {
+            transform: scale(0.95);
+        }
+
         /* Debug toggle */
         #debug-toggle {
             position: fixed;
@@ -384,6 +414,7 @@
 
     <div id="status-overlay"></div>
     <button id="debug-toggle">📋</button>
+    <button id="camera-switch">Switch Lens</button>
     <button id="info-button">i</button>
     <div id="debug-log"></div>
 
@@ -464,6 +495,7 @@
         const errorMessage = document.getElementById('error-message');
         const buttonEl = document.getElementById('screenshot-button');
         const infoButton = document.getElementById('info-button');
+        const cameraSwitchBtn = document.getElementById('camera-switch');
         const forceStartBtn = document.getElementById('force-start');
         const arModel = document.getElementById('ar-model');
 
@@ -476,11 +508,136 @@
         let canvasCheckAttempts = 0;
         const MAX_CANVAS_CHECKS = 20;
         
+        // Camera switching
+        let availableCameras = [];
+        let currentCameraIndex = 0;
+        let currentStream = null;
+        
         // Store app start time
         window.appStartTime = Date.now();
 
         log('App started', 'info');
         log(`User agent: ${navigator.userAgent}`, 'info');
+
+        // Enumerate available cameras
+        async function enumerateCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                availableCameras = devices.filter(device => 
+                    device.kind === 'videoinput' && 
+                    device.label.toLowerCase().includes('back')
+                );
+                
+                // If no back cameras found by label, get all video inputs
+                if (availableCameras.length === 0) {
+                    availableCameras = devices.filter(device => device.kind === 'videoinput');
+                }
+                
+                log(`Found ${availableCameras.length} camera(s)`, 'info');
+                availableCameras.forEach((cam, idx) => {
+                    log(`  Camera ${idx}: ${cam.label || 'Unknown'} (${cam.deviceId.substring(0, 20)}...)`, 'info');
+                });
+                
+                // Show camera switch button if multiple cameras
+                if (availableCameras.length > 1) {
+                    cameraSwitchBtn.classList.add('show');
+                    updateCameraButtonLabel();
+                }
+                
+                return availableCameras;
+            } catch (err) {
+                log(`Error enumerating cameras: ${err.message}`, 'error');
+                return [];
+            }
+        }
+        
+        // Update camera switch button label
+        function updateCameraButtonLabel() {
+            const camera = availableCameras[currentCameraIndex];
+            if (camera) {
+                let label = 'Camera';
+                const name = camera.label.toLowerCase();
+                
+                if (name.includes('ultra') || name.includes('wide')) {
+                    label = '📐 Wide';
+                } else if (name.includes('telephoto') || name.includes('tele')) {
+                    label = '🔭 Tele';
+                } else if (name.includes('front')) {
+                    label = '🤳 Front';
+                } else {
+                    label = '📷 Main';
+                }
+                
+                cameraSwitchBtn.textContent = label;
+            }
+        }
+        
+        // Switch to a specific camera
+        async function switchCamera(deviceId) {
+            log(`Switching to camera: ${deviceId}`, 'info');
+            
+            const video = document.querySelector('video');
+            if (!video) {
+                log('No video element to switch camera', 'error');
+                return;
+            }
+            
+            try {
+                // Stop current stream
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                    log('Stopped previous camera stream', 'info');
+                }
+                
+                // Get new stream with specific camera
+                const constraints = {
+                    video: {
+                        deviceId: deviceId ? { exact: deviceId } : undefined,
+                        facingMode: deviceId ? undefined : 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
+                    audio: false
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                currentStream = stream;
+                
+                video.srcObject = stream;
+                video.setAttribute('autoplay', '');
+                video.setAttribute('playsinline', '');
+                
+                await video.play();
+                log('New camera stream started', 'success');
+                
+                // Update button label
+                updateCameraButtonLabel();
+                
+                // Give a moment for the stream to stabilize
+                setTimeout(() => {
+                    showStatus(`Switched to ${cameraSwitchBtn.textContent}`, 'success', 2000);
+                }, 500);
+                
+            } catch (err) {
+                log(`Camera switch failed: ${err.message}`, 'error');
+                showStatus('Camera switch failed', 'error', 2000);
+            }
+        }
+        
+        // Camera switch button handler
+        cameraSwitchBtn.addEventListener('click', async () => {
+            if (availableCameras.length === 0) {
+                await enumerateCameras();
+            }
+            
+            if (availableCameras.length > 1) {
+                currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
+                const camera = availableCameras[currentCameraIndex];
+                await switchCamera(camera.deviceId);
+            } else {
+                showStatus('No other cameras available', 'warning', 2000);
+            }
+        });
 
         // Force start button
         forceStartBtn.addEventListener('click', () => {
@@ -502,6 +659,11 @@
             buttonEl.classList.add('show');
             infoButton.classList.add('show');
             debugToggle.classList.add('show');
+            
+            // Show camera switch if we have cameras
+            if (availableCameras.length > 1) {
+                cameraSwitchBtn.classList.add('show');
+            }
         }
 
         function showStatus(message, type = 'info', duration = 3000) {
@@ -549,6 +711,9 @@
                 });
                 
                 log('Camera permission granted', 'success');
+                
+                // Enumerate cameras now that we have permission
+                await enumerateCameras();
                 
                 // Stop the test stream immediately
                 stream.getTracks().forEach(track => track.stop());
@@ -717,20 +882,28 @@
                     nuclearOptionTriggered = true;
                     log('AR.js failed to start camera after 5s - using manual initialization', 'warn');
                     
-                    navigator.mediaDevices.getUserMedia({ 
-                        video: { 
-                            facingMode: 'environment',
+                    // Use selected camera or default
+                    const selectedCamera = availableCameras[currentCameraIndex];
+                    const constraints = {
+                        video: {
+                            deviceId: selectedCamera ? { exact: selectedCamera.deviceId } : undefined,
+                            facingMode: selectedCamera ? undefined : 'environment',
                             width: { ideal: 1920 },
                             height: { ideal: 1080 }
                         },
-                        audio: false 
-                    }).then(stream => {
+                        audio: false
+                    };
+                    
+                    navigator.mediaDevices.getUserMedia(constraints).then(stream => {
                         log('Manual camera stream obtained!', 'success');
+                        currentStream = stream;
                         video.srcObject = stream;
                         video.setAttribute('autoplay', '');
                         video.setAttribute('playsinline', '');
                         video.play().then(() => {
                             log('Video playing with manual stream', 'success');
+                            cameraSwitchBtn.classList.add('show');
+                            updateCameraButtonLabel();
                         }).catch(err => {
                             log(`Video play error: ${err.message}`, 'error');
                         });
@@ -941,6 +1114,14 @@
                 log(`Wake Lock error: ${err.message}`, 'warn');
             });
         }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                log('Cleaned up camera stream', 'info');
+            }
+        });
 
         // Start
         init();
