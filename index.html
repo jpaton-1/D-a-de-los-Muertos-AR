@@ -20,6 +20,41 @@
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Arial', sans-serif;
             font-weight: 400;
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+        }
+        
+        /* Ensure A-Frame scene fills viewport */
+        a-scene {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+        /* Ensure video fills and covers properly */
+        video {
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            min-width: 100% !important;
+            min-height: 100% !important;
+            width: auto !important;
+            height: auto !important;
+            transform: translate(-50%, -50%) !important;
+            object-fit: cover !important;
+            z-index: -1 !important;
+        }
+        
+        /* Canvas should fill viewport */
+        canvas {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
         }
 
         /* Loader/Onboarding Screen */
@@ -291,6 +326,57 @@
         #camera-switch:active {
             transform: scale(0.95);
         }
+        
+        /* Zoom controls */
+        #zoom-controls {
+            position: fixed;
+            bottom: 140px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000;
+            display: none;
+            flex-direction: row;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 25px;
+            backdrop-filter: blur(10px);
+        }
+        
+        #zoom-controls.show {
+            display: flex;
+        }
+        
+        .zoom-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        
+        .zoom-btn:active {
+            transform: scale(0.9);
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        #zoom-level {
+            color: white;
+            font-size: 13px;
+            min-width: 45px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
 
         /* Debug toggle */
         #debug-toggle {
@@ -445,6 +531,12 @@
     <button id="screenshot-button">
         <div id="screenshot-button-inner"></div>
     </button>
+    
+    <div id="zoom-controls">
+        <button class="zoom-btn" id="zoom-out">−</button>
+        <div id="zoom-level">1.0x</div>
+        <button class="zoom-btn" id="zoom-in">+</button>
+    </div>
 
     <script>
         // Debug logging system
@@ -498,6 +590,10 @@
         const cameraSwitchBtn = document.getElementById('camera-switch');
         const forceStartBtn = document.getElementById('force-start');
         const arModel = document.getElementById('ar-model');
+        const zoomControls = document.getElementById('zoom-controls');
+        const zoomInBtn = document.getElementById('zoom-in');
+        const zoomOutBtn = document.getElementById('zoom-out');
+        const zoomLevelDisplay = document.getElementById('zoom-level');
 
         let gpsInitialized = false;
         let modelLoaded = false;
@@ -508,10 +604,12 @@
         let canvasCheckAttempts = 0;
         const MAX_CANVAS_CHECKS = 20;
         
-        // Camera switching
+        // Camera switching and zoom
         let availableCameras = [];
         let currentCameraIndex = 0;
         let currentStream = null;
+        let currentZoom = 1.0;
+        let zoomCapabilities = null;
         
         // Store app start time
         window.appStartTime = Date.now();
@@ -589,19 +687,30 @@
                     log('Stopped previous camera stream', 'info');
                 }
                 
-                // Get new stream with specific camera
+                // Get viewport dimensions
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+                
+                // Get new stream with specific camera - use ideal constraints to avoid cropping
                 const constraints = {
                     video: {
                         deviceId: deviceId ? { exact: deviceId } : undefined,
                         facingMode: deviceId ? undefined : 'environment',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
+                        width: { ideal: viewportWidth, max: 1920 },
+                        height: { ideal: viewportHeight, max: 1080 },
+                        aspectRatio: { ideal: viewportWidth / viewportHeight }
                     },
                     audio: false
                 };
                 
+                log(`Requesting camera with viewport ${viewportWidth}x${viewportHeight}`, 'info');
+                
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 currentStream = stream;
+                
+                const videoTrack = stream.getVideoTracks()[0];
+                const settings = videoTrack.getSettings();
+                log(`Camera settings: ${settings.width}x${settings.height}, aspectRatio: ${settings.aspectRatio}`, 'info');
                 
                 video.srcObject = stream;
                 video.setAttribute('autoplay', '');
@@ -609,6 +718,9 @@
                 
                 await video.play();
                 log('New camera stream started', 'success');
+                
+                // Check zoom capabilities
+                updateZoomCapabilities();
                 
                 // Update button label
                 updateCameraButtonLabel();
@@ -638,6 +750,67 @@
                 showStatus('No other cameras available', 'warning', 2000);
             }
         });
+        
+        // Zoom control functions
+        function updateZoomCapabilities() {
+            if (!currentStream) return;
+            
+            const videoTrack = currentStream.getVideoTracks()[0];
+            const capabilities = videoTrack.getCapabilities();
+            
+            if (capabilities.zoom) {
+                zoomCapabilities = capabilities.zoom;
+                log(`Zoom range: ${zoomCapabilities.min} - ${zoomCapabilities.max}`, 'info');
+                zoomControls.classList.add('show');
+                
+                // Get current zoom
+                const settings = videoTrack.getSettings();
+                if (settings.zoom) {
+                    currentZoom = settings.zoom;
+                    updateZoomDisplay();
+                }
+            } else {
+                log('Camera does not support zoom', 'warn');
+                zoomControls.classList.remove('show');
+            }
+        }
+        
+        function updateZoomDisplay() {
+            zoomLevelDisplay.textContent = `${currentZoom.toFixed(1)}x`;
+        }
+        
+        async function setZoom(zoomLevel) {
+            if (!currentStream || !zoomCapabilities) return;
+            
+            const videoTrack = currentStream.getVideoTracks()[0];
+            
+            try {
+                await videoTrack.applyConstraints({
+                    advanced: [{ zoom: zoomLevel }]
+                });
+                
+                currentZoom = zoomLevel;
+                updateZoomDisplay();
+                log(`Zoom set to ${zoomLevel.toFixed(1)}x`, 'info');
+            } catch (err) {
+                log(`Zoom failed: ${err.message}`, 'error');
+            }
+        }
+        
+        // Zoom button handlers
+        zoomInBtn.addEventListener('click', () => {
+            if (zoomCapabilities) {
+                const newZoom = Math.min(currentZoom + 0.5, zoomCapabilities.max);
+                setZoom(newZoom);
+            }
+        });
+        
+        zoomOutBtn.addEventListener('click', () => {
+            if (zoomCapabilities) {
+                const newZoom = Math.max(currentZoom - 0.5, zoomCapabilities.min);
+                setZoom(newZoom);
+            }
+        });
 
         // Force start button
         forceStartBtn.addEventListener('click', () => {
@@ -664,6 +837,11 @@
             if (availableCameras.length > 1) {
                 cameraSwitchBtn.classList.add('show');
             }
+            
+            // Check for zoom capabilities
+            setTimeout(() => {
+                updateZoomCapabilities();
+            }, 1000);
         }
 
         function showStatus(message, type = 'info', duration = 3000) {
@@ -882,21 +1060,33 @@
                     nuclearOptionTriggered = true;
                     log('AR.js failed to start camera after 5s - using manual initialization', 'warn');
                     
+                    // Get viewport dimensions
+                    const viewportWidth = window.innerWidth;
+                    const viewportHeight = window.innerHeight;
+                    
                     // Use selected camera or default
                     const selectedCamera = availableCameras[currentCameraIndex];
                     const constraints = {
                         video: {
                             deviceId: selectedCamera ? { exact: selectedCamera.deviceId } : undefined,
                             facingMode: selectedCamera ? undefined : 'environment',
-                            width: { ideal: 1920 },
-                            height: { ideal: 1080 }
+                            width: { ideal: viewportWidth, max: 1920 },
+                            height: { ideal: viewportHeight, max: 1080 },
+                            aspectRatio: { ideal: viewportWidth / viewportHeight }
                         },
                         audio: false
                     };
                     
+                    log(`Manual camera init with viewport ${viewportWidth}x${viewportHeight}`, 'info');
+                    
                     navigator.mediaDevices.getUserMedia(constraints).then(stream => {
                         log('Manual camera stream obtained!', 'success');
                         currentStream = stream;
+                        
+                        const videoTrack = stream.getVideoTracks()[0];
+                        const settings = videoTrack.getSettings();
+                        log(`Camera: ${settings.width}x${settings.height}, AR: ${settings.aspectRatio?.toFixed(2)}`, 'info');
+                        
                         video.srcObject = stream;
                         video.setAttribute('autoplay', '');
                         video.setAttribute('playsinline', '');
@@ -904,6 +1094,7 @@
                             log('Video playing with manual stream', 'success');
                             cameraSwitchBtn.classList.add('show');
                             updateCameraButtonLabel();
+                            updateZoomCapabilities();
                         }).catch(err => {
                             log(`Video play error: ${err.message}`, 'error');
                         });
@@ -1121,6 +1312,23 @@
                 currentStream.getTracks().forEach(track => track.stop());
                 log('Cleaned up camera stream', 'info');
             }
+        });
+        
+        // Handle orientation changes
+        window.addEventListener('resize', () => {
+            log(`Viewport resized to ${window.innerWidth}x${window.innerHeight}`, 'info');
+            
+            // Optionally restart camera with new dimensions
+            // Uncomment if you want automatic adjustment on rotation:
+            /*
+            if (currentStream && cameraReady) {
+                const camera = availableCameras[currentCameraIndex];
+                if (camera) {
+                    log('Restarting camera for new orientation', 'info');
+                    switchCamera(camera.deviceId);
+                }
+            }
+            */
         });
 
         // Start
