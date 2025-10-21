@@ -472,6 +472,7 @@
         let cameraReady = false;
         let currentPosition = null;
         let initTimeout;
+        let videoCheckInterval;
 
         log('App started', 'info');
         log(`User agent: ${navigator.userAgent}`, 'info');
@@ -651,6 +652,80 @@
             }
         });
 
+        // Manual video element check (fallback for iOS)
+        function checkVideoElement() {
+            log('Checking for video element...', 'info');
+            const video = document.querySelector('video');
+            
+            if (video) {
+                log(`Video element found. ReadyState: ${video.readyState}, Paused: ${video.paused}`, 'info');
+                
+                if (video.readyState >= 2) { // HAVE_CURRENT_DATA or better
+                    log('Video is ready and playing!', 'success');
+                    cameraReady = true;
+                    
+                    if (modelLoaded || !arModel) {
+                        hideLoader();
+                        showStatus('AR Experience Ready!', 'success', 3000);
+                    }
+                    return true;
+                }
+                
+                // Try to play if paused
+                if (video.paused) {
+                    log('Video is paused, attempting to play...', 'warn');
+                    video.play().then(() => {
+                        log('Video play() succeeded', 'success');
+                        cameraReady = true;
+                        if (modelLoaded || !arModel) {
+                            hideLoader();
+                            showStatus('AR Experience Ready!', 'success', 3000);
+                        }
+                    }).catch(err => {
+                        log(`Video play() failed: ${err.message}`, 'error');
+                    });
+                }
+                
+                // Listen for video ready events
+                video.addEventListener('loadeddata', () => {
+                    log('Video loadeddata event fired', 'success');
+                    cameraReady = true;
+                    if (modelLoaded || !arModel) {
+                        hideLoader();
+                        showStatus('AR Experience Ready!', 'success', 3000);
+                    }
+                });
+                
+                video.addEventListener('playing', () => {
+                    log('Video playing event fired', 'success');
+                    cameraReady = true;
+                    if (modelLoaded || !arModel) {
+                        hideLoader();
+                        showStatus('AR Experience Ready!', 'success', 3000);
+                    }
+                });
+                
+                return false;
+            } else {
+                log('No video element found yet', 'warn');
+                return false;
+            }
+        }
+
+        // Poll for video element
+        let videoCheckInterval = setInterval(() => {
+            if (checkVideoElement() || cameraReady) {
+                clearInterval(videoCheckInterval);
+            }
+        }, 500);
+
+        // Also clear interval after 20 seconds regardless
+        setTimeout(() => {
+            if (videoCheckInterval) {
+                clearInterval(videoCheckInterval);
+            }
+        }, 20000);
+
         // Model loading
         if (arModel) {
             arModel.addEventListener('model-loaded', () => {
@@ -738,11 +813,15 @@
             // Timeout fallback
             initTimeout = setTimeout(() => {
                 if (!cameraReady) {
-                    log('Camera initialization timeout - forcing start', 'warn');
-                    loaderMessage.textContent = 'Camera taking too long...';
-                    cameraReady = true;
-                    hideLoader();
+                    log('Camera initialization timeout - checking video manually', 'warn');
+                    if (!checkVideoElement()) {
+                        log('No video element found after timeout - forcing start anyway', 'warn');
+                        loaderMessage.textContent = 'Camera may not be working...';
+                        cameraReady = true;
+                        hideLoader();
+                    }
                 }
+                clearInterval(videoCheckInterval);
             }, 15000);
         }
 
