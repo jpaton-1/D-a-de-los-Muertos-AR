@@ -473,6 +473,8 @@
         let currentPosition = null;
         let initTimeout;
         let videoCheckInterval;
+        let canvasCheckAttempts = 0;
+        const MAX_CANVAS_CHECKS = 20;
 
         log('App started', 'info');
         log(`User agent: ${navigator.userAgent}`, 'info');
@@ -653,73 +655,111 @@
         });
 
         // Manual video element check (fallback for iOS)
+        let videoEventsAttached = false;
+        
         function checkVideoElement() {
-            log('Checking for video element...', 'info');
             const video = document.querySelector('video');
+            const canvas = document.querySelector('canvas');
             
-            if (video) {
-                log(`Video element found. ReadyState: ${video.readyState}, Paused: ${video.paused}`, 'info');
-                
-                if (video.readyState >= 2) { // HAVE_CURRENT_DATA or better
-                    log('Video is ready and playing!', 'success');
-                    cameraReady = true;
-                    
-                    if (modelLoaded || !arModel) {
-                        hideLoader();
-                        showStatus('AR Experience Ready!', 'success', 3000);
-                    }
-                    return true;
-                }
+            if (video && !videoEventsAttached) {
+                log(`Video found. ReadyState: ${video.readyState}, Paused: ${video.paused}, Width: ${video.videoWidth}x${video.videoHeight}`, 'info');
                 
                 // Try to play if paused
-                if (video.paused) {
-                    log('Video is paused, attempting to play...', 'warn');
-                    video.play().then(() => {
-                        log('Video play() succeeded', 'success');
-                        cameraReady = true;
-                        if (modelLoaded || !arModel) {
-                            hideLoader();
-                            showStatus('AR Experience Ready!', 'success', 3000);
-                        }
-                    }).catch(err => {
+                if (video.paused && video.readyState >= 2) {
+                    log('Video has data but is paused, attempting to play...', 'warn');
+                    video.play().catch(err => {
                         log(`Video play() failed: ${err.message}`, 'error');
                     });
                 }
                 
-                // Listen for video ready events
+                // Attach events only once
+                videoEventsAttached = true;
+                
                 video.addEventListener('loadeddata', () => {
-                    log('Video loadeddata event fired', 'success');
-                    cameraReady = true;
-                    if (modelLoaded || !arModel) {
-                        hideLoader();
-                        showStatus('AR Experience Ready!', 'success', 3000);
-                    }
-                });
+                    log(`Video loadeddata: ${video.videoWidth}x${video.videoHeight}`, 'info');
+                }, { once: true });
                 
                 video.addEventListener('playing', () => {
                     log('Video playing event fired', 'success');
+                    // Wait a bit for AR.js to render to canvas
+                    setTimeout(checkCanvasRendering, 500);
+                }, { once: true });
+                
+                video.addEventListener('canplay', () => {
+                    log('Video canplay event fired', 'info');
+                }, { once: true });
+            }
+            
+            return false; // Never stop polling from this function
+        }
+        
+        // Check if canvas is actually rendering
+        function checkCanvasRendering() {
+            canvasCheckAttempts++;
+            
+            if (canvasCheckAttempts > MAX_CANVAS_CHECKS) {
+                log(`Canvas check timeout after ${MAX_CANVAS_CHECKS} attempts - forcing start`, 'warn');
+                cameraReady = true;
+                hideLoader();
+                return;
+            }
+            
+            const canvas = document.querySelector('canvas');
+            
+            if (!canvas) {
+                log('No canvas element found', 'warn');
+                setTimeout(checkCanvasRendering, 500);
+                return;
+            }
+            
+            log(`Canvas check #${canvasCheckAttempts}: ${canvas.width}x${canvas.height}`, 'info');
+            
+            try {
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(0, 0, Math.min(canvas.width, 100), Math.min(canvas.height, 100));
+                const data = imageData.data;
+                
+                // Check if canvas has non-zero pixels (is rendering something)
+                let hasContent = false;
+                for (let i = 0; i < data.length; i += 4) {
+                    if (data[i] !== 0 || data[i+1] !== 0 || data[i+2] !== 0) {
+                        hasContent = true;
+                        break;
+                    }
+                }
+                
+                if (hasContent) {
+                    log('Canvas is rendering camera feed!', 'success');
                     cameraReady = true;
                     if (modelLoaded || !arModel) {
                         hideLoader();
                         showStatus('AR Experience Ready!', 'success', 3000);
                     }
-                });
-                
-                return false;
-            } else {
-                log('No video element found yet', 'warn');
-                return false;
+                } else {
+                    log('Canvas exists but is blank, waiting...', 'warn');
+                    setTimeout(checkCanvasRendering, 500);
+                }
+            } catch (err) {
+                log(`Canvas check error: ${err.message} - likely WebGL`, 'warn');
+                // WebGL canvas - can't read pixels, just trust it
+                cameraReady = true;
+                if (modelLoaded || !arModel) {
+                    hideLoader();
+                    showStatus('AR Experience Ready!', 'success', 3000);
+                }
             }
         }
 
         // Poll for video element
-        let videoCheckInterval = setInterval(() => {
-            if (checkVideoElement() || cameraReady) {
+        videoCheckInterval = setInterval(() => {
+            if (!cameraReady) {
+                checkVideoElement();
+            } else {
                 clearInterval(videoCheckInterval);
             }
-        }, 500);
+        }, 1000); // Check every second
 
-        // Also clear interval after 20 seconds regardless
+        // Clear interval after 20 seconds regardless
         setTimeout(() => {
             if (videoCheckInterval) {
                 clearInterval(videoCheckInterval);
