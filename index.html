@@ -475,6 +475,9 @@
         let videoCheckInterval;
         let canvasCheckAttempts = 0;
         const MAX_CANVAS_CHECKS = 20;
+        
+        // Store app start time
+        window.appStartTime = Date.now();
 
         log('App started', 'info');
         log(`User agent: ${navigator.userAgent}`, 'info');
@@ -656,23 +659,17 @@
 
         // Manual video element check (fallback for iOS)
         let videoEventsAttached = false;
-        let lastVideoCheck = 0;
+        let nuclearOptionTriggered = false;
         
         function checkVideoElement() {
             const video = document.querySelector('video');
-            const now = Date.now();
             
-            // Only log every 2 seconds to avoid spam
-            if (now - lastVideoCheck > 2000) {
-                if (video) {
-                    log(`Video: ReadyState=${video.readyState}, Paused=${video.paused}, Size=${video.videoWidth}x${video.videoHeight}, Src=${video.src ? 'YES' : 'NO'}`, 'info');
-                } else {
-                    log('No video element found yet', 'warn');
-                }
-                lastVideoCheck = now;
+            if (!video) {
+                return null;
             }
             
-            if (!video) return false;
+            // Log current state
+            log(`Video check: ReadyState=${video.readyState}, Paused=${video.paused}, Size=${video.videoWidth}x${video.videoHeight}, HasSrc=${!!video.src}, HasStream=${!!video.srcObject}`, 'info');
             
             // Attach events only once
             if (!videoEventsAttached) {
@@ -685,42 +682,66 @@
                 
                 video.addEventListener('loadeddata', () => {
                     log(`Video loadeddata: ${video.videoWidth}x${video.videoHeight}`, 'success');
-                    setTimeout(checkCanvasRendering, 500);
+                    setTimeout(() => checkCanvasRendering(), 500);
                 });
                 
                 video.addEventListener('canplay', () => {
                     log('Video canplay event', 'info');
-                    setTimeout(checkCanvasRendering, 500);
+                    setTimeout(() => checkCanvasRendering(), 500);
                 });
                 
                 video.addEventListener('playing', () => {
                     log('Video playing event', 'success');
-                    setTimeout(checkCanvasRendering, 500);
+                    setTimeout(() => checkCanvasRendering(), 500);
                 });
             }
             
-            // If video has dimensions and data, try to render
+            // If video has data, check canvas
             if (video.readyState >= 2 && video.videoWidth > 0) {
                 log('Video has data and dimensions!', 'success');
                 
                 if (video.paused) {
-                    log('Video is paused, playing it...', 'warn');
+                    log('Video is paused, attempting play...', 'warn');
                     video.play().catch(e => log(`Play failed: ${e.message}`, 'error'));
                 }
                 
-                setTimeout(checkCanvasRendering, 1000);
-                return true;
+                setTimeout(() => checkCanvasRendering(), 500);
+                return video;
             }
             
-            // Try to play even if not ready (might trigger loading)
-            if (video.paused && video.readyState === 0) {
-                log('Video stuck at ReadyState 0, attempting play to trigger load...', 'warn');
-                video.play().catch(e => {
-                    log(`Play failed (expected): ${e.message}`, 'warn');
-                });
+            // AR.js failed to attach camera stream - trigger nuclear option
+            if (!nuclearOptionTriggered && !video.src && !video.srcObject) {
+                const elapsed = Date.now() - window.appStartTime;
+                
+                if (elapsed > 5000) {
+                    nuclearOptionTriggered = true;
+                    log('AR.js failed to start camera after 5s - using manual initialization', 'warn');
+                    
+                    navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            facingMode: 'environment',
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        },
+                        audio: false 
+                    }).then(stream => {
+                        log('Manual camera stream obtained!', 'success');
+                        video.srcObject = stream;
+                        video.setAttribute('autoplay', '');
+                        video.setAttribute('playsinline', '');
+                        video.play().then(() => {
+                            log('Video playing with manual stream', 'success');
+                        }).catch(err => {
+                            log(`Video play error: ${err.message}`, 'error');
+                        });
+                    }).catch(err => {
+                        log(`Manual camera failed: ${err.message}`, 'error');
+                        showError('Camera Error', `Could not start camera: ${err.message}`);
+                    });
+                }
             }
             
-            return false;
+            return video;
         }
         
         // Check if canvas is actually rendering
@@ -728,90 +749,76 @@
             canvasCheckAttempts++;
             
             if (canvasCheckAttempts > MAX_CANVAS_CHECKS) {
-                log(`Canvas check timeout after ${MAX_CANVAS_CHECKS} attempts - forcing start`, 'warn');
+                log(`Canvas timeout after ${MAX_CANVAS_CHECKS} checks - starting anyway`, 'warn');
                 cameraReady = true;
                 hideLoader();
+                showStatus('Camera may not be visible', 'warning', 3000);
                 return;
             }
             
             const canvas = document.querySelector('canvas');
+            const video = document.querySelector('video');
             
             if (!canvas) {
-                log(`Canvas check #${canvasCheckAttempts}: No canvas found yet`, 'warn');
-                setTimeout(checkCanvasRendering, 500);
+                log(`Canvas check #${canvasCheckAttempts}: No canvas yet`, 'warn');
+                setTimeout(() => checkCanvasRendering(), 500);
                 return;
             }
             
-            log(`Canvas check #${canvasCheckAttempts}: ${canvas.width}x${canvas.height}`, 'info');
+            if (video) {
+                log(`Canvas check #${canvasCheckAttempts}: Canvas=${canvas.width}x${canvas.height}, Video=${video.videoWidth}x${video.videoHeight}`, 'info');
+            }
             
             try {
                 const ctx = canvas.getContext('2d');
-                const imageData = ctx.getImageData(0, 0, Math.min(canvas.width, 100), Math.min(canvas.height, 100));
+                const sampleSize = Math.min(100, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, sampleSize, sampleSize);
                 const data = imageData.data;
                 
-                // Check if canvas has non-zero pixels
-                let hasContent = false;
+                // Check for non-zero pixels
+                let nonZeroPixels = 0;
                 for (let i = 0; i < data.length; i += 4) {
                     if (data[i] !== 0 || data[i+1] !== 0 || data[i+2] !== 0) {
-                        hasContent = true;
-                        break;
+                        nonZeroPixels++;
+                        if (nonZeroPixels > 10) break; // Found enough
                     }
                 }
                 
-                if (hasContent) {
-                    log('Canvas is rendering camera feed!', 'success');
+                if (nonZeroPixels > 10) {
+                    log(`Canvas has content! (${nonZeroPixels}+ colored pixels)`, 'success');
                     cameraReady = true;
-                    if (modelLoaded || !arModel) {
-                        hideLoader();
-                        showStatus('AR Experience Ready!', 'success', 3000);
-                    }
-                } else {
-                    log('Canvas is blank, retrying...', 'warn');
-                    setTimeout(checkCanvasRendering, 500);
-                }
-            } catch (err) {
-                log(`Canvas is WebGL (can't read pixels): ${err.message}`, 'info');
-                // WebGL canvas - assume it's working
-                cameraReady = true;
-                if (modelLoaded || !arModel) {
                     hideLoader();
                     showStatus('AR Experience Ready!', 'success', 3000);
+                } else {
+                    log(`Canvas blank (${nonZeroPixels} pixels), retrying...`, 'warn');
+                    setTimeout(() => checkCanvasRendering(), 500);
                 }
+            } catch (err) {
+                log(`Canvas is WebGL: ${err.message}`, 'info');
+                // WebGL canvas - assume working
+                cameraReady = true;
+                hideLoader();
+                showStatus('AR Experience Ready!', 'success', 3000);
             }
         }
 
-        // Poll for video element and try to kick it into gear
+        // Poll for video element continuously
         videoCheckInterval = setInterval(() => {
-            if (!cameraReady) {
-                const hasVideo = checkVideoElement();
-                
-                // After 8 seconds, if video still stuck, try nuclear option
-                const elapsed = Date.now() - window.appStartTime;
-                if (elapsed > 8000 && !hasVideo) {
-                    const video = document.querySelector('video');
-                    if (video && video.readyState === 0 && !video.src && !video.srcObject) {
-                        log('Video element exists but has no stream - AR.js failed to start camera', 'error');
-                        log('Attempting manual camera initialization...', 'warn');
-                        
-                        navigator.mediaDevices.getUserMedia({ 
-                            video: { facingMode: 'environment' },
-                            audio: false 
-                        }).then(stream => {
-                            log('Got manual camera stream, attaching to video', 'success');
-                            video.srcObject = stream;
-                            video.play();
-                        }).catch(err => {
-                            log(`Manual camera failed: ${err.message}`, 'error');
-                        });
-                    }
-                }
-            } else {
+            if (cameraReady) {
                 clearInterval(videoCheckInterval);
+                return;
             }
-        }, 1000);
-
-        // Store app start time for elapsed time checks
-        window.appStartTime = Date.now();
+            
+            checkVideoElement();
+        }, 1500); // Check every 1.5 seconds
+        
+        // Clear interval after 20 seconds
+        setTimeout(() => {
+            if (videoCheckInterval) {
+                clearInterval(videoCheckInterval);
+                log('Stopped video polling after 20s', 'info');
+            }
+        }, 20000);
 
         // Clear interval after 20 seconds regardless
         setTimeout(() => {
@@ -904,20 +911,24 @@
             // Start GPS
             initGPS();
             
-            // Timeout fallback
+            // Timeout fallback - force start after 15 seconds
             initTimeout = setTimeout(() => {
-                if (!cameraReady) {
-                    log('Camera initialization timeout - forcing start', 'warn');
-                    
-                    const video = document.querySelector('video');
-                    if (video) {
-                        log(`Final video state: ReadyState=${video.readyState}, Size=${video.videoWidth}x${video.videoHeight}`, 'warn');
-                    }
-                    
-                    loaderMessage.textContent = 'Starting anyway...';
-                    cameraReady = true;
-                    hideLoader();
+                if (cameraReady) return;
+                
+                log('15 second timeout reached', 'warn');
+                
+                const video = checkVideoElement();
+                if (video) {
+                    log(`Timeout - Video state: RS=${video.readyState}, Size=${video.videoWidth}x${video.videoHeight}, Stream=${!!video.srcObject}`, 'warn');
+                } else {
+                    log('Timeout - No video element exists', 'error');
                 }
+                
+                // Force start regardless
+                loaderMessage.textContent = 'Starting anyway...';
+                cameraReady = true;
+                hideLoader();
+                
                 if (videoCheckInterval) {
                     clearInterval(videoCheckInterval);
                 }
