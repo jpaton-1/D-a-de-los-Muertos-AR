@@ -26,12 +26,13 @@
         .arjs-loader {
             height: 100%;
             width: 100%;
-            position: absolute;
+            position: fixed;
             top: 0;
             left: 0;
             background: linear-gradient(135deg, #FF6B35 0%, #F7931E 50%, #FDB913 100%);
             z-index: 9999;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             padding: 40px;
@@ -64,6 +65,7 @@
             line-height: 1.6;
             margin: 30px 0;
             font-weight: 400;
+            min-height: 50px;
         }
         
         .loader-instructions {
@@ -89,7 +91,61 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* Decorative elements - removed */
+        /* Debug log */
+        #debug-log {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.9);
+            color: #0f0;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 10002;
+            display: none;
+        }
+        
+        #debug-log.show {
+            display: block;
+        }
+        
+        .log-entry {
+            margin: 2px 0;
+            word-wrap: break-word;
+        }
+        
+        .log-error {
+            color: #f44;
+        }
+        
+        .log-success {
+            color: #4f4;
+        }
+        
+        .log-warn {
+            color: #fa0;
+        }
+
+        /* Manual override button */
+        #force-start {
+            background: rgba(255, 255, 255, 0.9);
+            color: #FF6B35;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        #force-start.show {
+            display: inline-block;
+        }
 
         /* Status overlay */
         #status-overlay {
@@ -179,10 +235,6 @@
             margin: 8px auto;
             transition: all 0.2s ease;
         }
-        
-        #screenshot-button:hover {
-            box-shadow: 0 8px 25px rgba(255, 107, 53, 0.6);
-        }
 
         /* Info button */
         #info-button {
@@ -209,10 +261,29 @@
         #info-button.show {
             display: flex;
         }
+
+        /* Debug toggle */
+        #debug-toggle {
+            position: fixed;
+            top: 30px;
+            left: 30px;
+            z-index: 10000;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.7);
+            border: none;
+            color: #0f0;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
         
-        #info-button:hover {
-            box-shadow: 0 6px 20px rgba(255, 107, 53, 0.5);
-            transform: scale(1.05);
+        #debug-toggle.show {
+            display: flex;
         }
 
         /* Error screen */
@@ -272,42 +343,15 @@
             transition: all 0.2s ease;
             box-shadow: 0 4px 15px rgba(255, 107, 53, 0.3);
         }
-        
-        #error-content button:hover {
-            box-shadow: 0 6px 20px rgba(255, 107, 53, 0.4);
-            transform: translateY(-2px);
-        }
 
-        /* Mobile adjustments */
         @media (max-width: 600px) {
             .arjs-loader h1 {
                 font-size: 1.8em;
-                margin-bottom: 15px;
             }
             
-            .arjs-loader .subtitle {
-                font-size: 1em;
-                margin-bottom: 30px;
-            }
-            
-            .loader-status {
-                font-size: 0.95em;
-            }
-            
-            #error-content {
-                padding: 40px 30px;
-            }
-            
-            #screenshot-button {
-                bottom: 40px;
-                width: 65px;
-                height: 65px;
-            }
-            
-            #screenshot-button-inner {
-                width: 50px;
-                height: 50px;
-                margin: 7.5px auto;
+            #debug-log {
+                font-size: 10px;
+                max-height: 120px;
             }
         }
     </style>
@@ -319,10 +363,13 @@
             <h1>Día de los Muertos</h1>
             <div class="subtitle">AR Experience</div>
             <div class="spinner"></div>
-            <div class="loader-status" id="loader-message">Initializing experience</div>
+            <div class="loader-status" id="loader-message">Initializing...</div>
+            <button id="force-start">Start Anyway</button>
             <div class="loader-instructions">
-                Ensure GPS and camera permissions are enabled.<br/>
-                You must be within 200m of the location.
+                This experience requires:<br/>
+                • Camera permission<br/>
+                • Location permission<br/>
+                • Physical proximity to location
             </div>
         </div>
     </div>
@@ -336,24 +383,26 @@
     </div>
 
     <div id="status-overlay"></div>
-    
-    <button id="info-button" title="Location Info">i</button>
+    <button id="debug-toggle">📋</button>
+    <button id="info-button">i</button>
+    <div id="debug-log"></div>
 
     <a-scene
         vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true; antialias: true; colorManagement: true; sortObjects: true;"
+        renderer="logarithmicDepthBuffer: true; antialias: true; colorManagement: true;"
         arjs='sourceType: webcam; debugUIEnabled: false; videoTexture: true;'
         screenshot="width: 1920; height: 1080;"
         embedded
+        loading-screen="enabled: false"
     >
-        <a-assets>
+        <a-assets timeout="30000">
             <a-asset-item id="chapelModel" src="./assets/dia_de_los_muertos.glb"></a-asset-item>
         </a-assets>
 
         <a-camera gps-camera="simulateLatitude: 36.001626; simulateLongitude: -78.939689; minDistance: 0; maxDistance: 200;" rotation-reader></a-camera>
 
         <a-entity
-            id="chapel-model"
+            id="ar-model"
             gltf-model="#chapelModel"
             gps-entity-place="latitude: 36.001626; longitude: -78.939689;"
             scale="50 50 50"
@@ -367,6 +416,37 @@
     </button>
 
     <script>
+        // Debug logging system
+        const debugLog = document.getElementById('debug-log');
+        const debugToggle = document.getElementById('debug-toggle');
+        let debugVisible = false;
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            if (type === 'error') entry.classList.add('log-error');
+            if (type === 'success') entry.classList.add('log-success');
+            if (type === 'warn') entry.classList.add('log-warn');
+            
+            entry.textContent = `[${timestamp}] ${message}`;
+            debugLog.appendChild(entry);
+            debugLog.scrollTop = debugLog.scrollHeight;
+            
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+
+        debugToggle.addEventListener('click', () => {
+            debugVisible = !debugVisible;
+            if (debugVisible) {
+                debugLog.classList.add('show');
+            } else {
+                debugLog.classList.remove('show');
+            }
+        });
+
+        // Configuration
         const CONFIG = {
             targetLat: 36.001626,
             targetLon: -78.939689,
@@ -374,6 +454,7 @@
             minAccuracy: 50,
         };
 
+        // Elements
         const sceneEl = document.querySelector('a-scene');
         const loaderEl = document.querySelector('.arjs-loader');
         const loaderMessage = document.getElementById('loader-message');
@@ -383,33 +464,56 @@
         const errorMessage = document.getElementById('error-message');
         const buttonEl = document.getElementById('screenshot-button');
         const infoButton = document.getElementById('info-button');
-        const chapelModel = document.getElementById('chapel-model');
+        const forceStartBtn = document.getElementById('force-start');
+        const arModel = document.getElementById('ar-model');
 
         let gpsInitialized = false;
         let modelLoaded = false;
+        let cameraReady = false;
         let currentPosition = null;
+        let initTimeout;
 
-        function checkBrowserSupport() {
-            const issues = [];
-            
-            if (!navigator.geolocation) {
-                issues.push('GPS not supported');
+        log('App started', 'info');
+        log(`User agent: ${navigator.userAgent}`, 'info');
+
+        // Force start button
+        forceStartBtn.addEventListener('click', () => {
+            log('Force start triggered by user', 'warn');
+            hideLoader();
+        });
+
+        // Show force start after delay
+        setTimeout(() => {
+            if (loaderEl.style.display !== 'none') {
+                forceStartBtn.classList.add('show');
+                log('Force start button shown (timeout)', 'warn');
             }
+        }, 10000);
+
+        function hideLoader() {
+            log('Hiding loader', 'success');
+            loaderEl.style.display = 'none';
+            buttonEl.classList.add('show');
+            infoButton.classList.add('show');
+            debugToggle.classList.add('show');
+        }
+
+        function showStatus(message, type = 'info', duration = 3000) {
+            statusOverlay.textContent = message;
+            statusOverlay.className = 'show ' + type;
             
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                issues.push('Camera not supported');
+            if (duration > 0) {
+                setTimeout(() => {
+                    statusOverlay.classList.remove('show');
+                }, duration);
             }
-            
-            if (!window.DeviceOrientationEvent && !window.DeviceMotionEvent) {
-                issues.push('Device orientation not supported');
-            }
-            
-            if (issues.length > 0) {
-                showError('Unsupported Browser', issues.join('<br>') + '<br><br>Please use a modern mobile browser');
-                return false;
-            }
-            
-            return true;
+        }
+
+        function showError(title, message) {
+            log(`Error: ${title} - ${message}`, 'error');
+            errorTitle.textContent = title;
+            errorMessage.innerHTML = message;
+            errorScreen.classList.add('show');
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -427,23 +531,33 @@
             return R * c;
         }
 
-        function showStatus(message, type = 'info', duration = 3000) {
-            statusOverlay.textContent = message;
-            statusOverlay.className = 'show ' + type;
+        // Camera permission check
+        async function checkCameraPermission() {
+            log('Checking camera permission...', 'info');
+            loaderMessage.textContent = 'Requesting camera access...';
             
-            if (duration > 0) {
-                setTimeout(() => {
-                    statusOverlay.classList.remove('show');
-                }, duration);
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' },
+                    audio: false 
+                });
+                
+                log('Camera permission granted', 'success');
+                
+                // Stop the test stream immediately
+                stream.getTracks().forEach(track => track.stop());
+                
+                return true;
+            } catch (err) {
+                log(`Camera permission error: ${err.name} - ${err.message}`, 'error');
+                showError('Camera Access Denied', 
+                    `Cannot access camera: ${err.message}<br><br>` +
+                    'Please go to Chrome Settings → Site Settings → Camera and enable camera access for this site.');
+                return false;
             }
         }
 
-        function showError(title, message) {
-            errorTitle.textContent = title;
-            errorMessage.innerHTML = message;
-            errorScreen.classList.add('show');
-        }
-
+        // GPS handling
         function handlePosition(position) {
             currentPosition = position;
             const accuracy = position.coords.accuracy;
@@ -454,26 +568,27 @@
                 CONFIG.targetLon
             );
 
-            console.log(`GPS - Accuracy: ${accuracy.toFixed(1)}m, Distance: ${distance.toFixed(1)}m`);
+            log(`GPS update - Acc: ${accuracy.toFixed(1)}m, Dist: ${distance.toFixed(1)}m`, 'info');
 
             if (!gpsInitialized) {
                 gpsInitialized = true;
-                loaderMessage.textContent = 'GPS acquired! Loading 3D model...';
+                loaderMessage.textContent = 'GPS acquired! Waiting for camera...';
+                log('GPS initialized', 'success');
             }
 
             if (distance > CONFIG.maxDistance) {
-                showStatus(`Too far! You're ${Math.round(distance)}m away. Get within ${CONFIG.maxDistance}m.`, 'warning', 5000);
-                if (chapelModel) chapelModel.setAttribute('visible', false);
+                showStatus(`Too far: ${Math.round(distance)}m away`, 'warning', 5000);
+                if (arModel) arModel.setAttribute('visible', false);
             } else if (accuracy > CONFIG.minAccuracy) {
-                showStatus(`GPS accuracy: ${Math.round(accuracy)}m. Move to open area for better signal.`, 'warning', 5000);
-            } else if (modelLoaded) {
-                if (chapelModel) chapelModel.setAttribute('visible', true);
+                showStatus(`GPS accuracy: ${Math.round(accuracy)}m`, 'warning', 5000);
+            } else if (modelLoaded && cameraReady) {
+                if (arModel) arModel.setAttribute('visible', true);
                 showStatus(`Distance: ${Math.round(distance)}m`, 'success', 3000);
             }
         }
 
         function handleGPSError(error) {
-            console.error('GPS Error:', error);
+            log(`GPS error: ${error.code} - ${error.message}`, 'error');
             let message = 'Unable to get your location. ';
             
             switch(error.code) {
@@ -481,22 +596,21 @@
                     message += 'Please enable location permissions in your browser settings.';
                     break;
                 case error.POSITION_UNAVAILABLE:
-                    message += 'Location information unavailable. Try moving to an open area.';
+                    message += 'Location information unavailable.';
                     break;
                 case error.TIMEOUT:
-                    message += 'Location request timed out. Please try again.';
+                    message += 'Location request timed out.';
                     break;
-                default:
-                    message += 'An unknown error occurred.';
             }
             
             showError('GPS Error', message);
         }
 
         function initGPS() {
+            log('Initializing GPS...', 'info');
+            loaderMessage.textContent = 'Acquiring GPS signal...';
+            
             if (navigator.geolocation) {
-                loaderMessage.textContent = 'Acquiring GPS signal...';
-                
                 navigator.geolocation.watchPosition(
                     handlePosition,
                     handleGPSError,
@@ -506,31 +620,65 @@
                         timeout: 27000
                     }
                 );
+            } else {
+                log('Geolocation not supported', 'error');
+                showError('GPS Not Supported', 'Your device does not support geolocation.');
             }
         }
 
-        chapelModel.addEventListener('model-loaded', () => {
-            console.log('Model loaded successfully');
-            modelLoaded = true;
-            loaderMessage.textContent = 'Model loaded! Starting AR...';
-            
-            setTimeout(() => {
-                loaderEl.style.display = 'none';
-                buttonEl.classList.add('show');
-                infoButton.classList.add('show');
-                showStatus('AR Experience Ready!', 'success', 3000);
-            }, 500);
-        });
-
-        chapelModel.addEventListener('model-error', (e) => {
-            console.error('Model error:', e);
-            showError('Model Loading Failed', 'Unable to load the 3D model. Please check the model file path and try again.');
-        });
-
+        // A-Frame event handlers
         sceneEl.addEventListener('loaded', () => {
-            console.log('Scene loaded');
+            log('A-Frame scene loaded', 'success');
         });
 
+        sceneEl.addEventListener('camera-init', () => {
+            log('Camera component initialized', 'success');
+        });
+
+        sceneEl.addEventListener('camera-error', (err) => {
+            log(`Camera error event: ${JSON.stringify(err.detail)}`, 'error');
+        });
+
+        // AR.js events
+        sceneEl.addEventListener('arjs-video-loaded', () => {
+            log('AR.js video loaded successfully!', 'success');
+            cameraReady = true;
+            loaderMessage.textContent = 'Camera ready!';
+            
+            if (modelLoaded || !arModel) {
+                hideLoader();
+                showStatus('AR Experience Ready!', 'success', 3000);
+            }
+        });
+
+        // Model loading
+        if (arModel) {
+            arModel.addEventListener('model-loaded', () => {
+                log('3D model loaded successfully', 'success');
+                modelLoaded = true;
+                loaderMessage.textContent = 'Model loaded! Starting AR...';
+                
+                if (cameraReady) {
+                    hideLoader();
+                    showStatus('AR Experience Ready!', 'success', 3000);
+                }
+            });
+
+            arModel.addEventListener('model-error', (e) => {
+                log(`Model loading error: ${JSON.stringify(e.detail)}`, 'error');
+                modelLoaded = true; // Continue anyway
+                log('Continuing without model', 'warn');
+                
+                if (cameraReady) {
+                    hideLoader();
+                }
+            });
+        } else {
+            modelLoaded = true;
+            log('No model element found, continuing', 'warn');
+        }
+
+        // Screenshot functionality
         function takeScreenshot(event) {
             event.preventDefault();
             event.stopPropagation();
@@ -538,18 +686,24 @@
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
             const filename = `dia-de-los-muertos-${timestamp}.png`;
             
-            sceneEl.components.screenshot.capture('perspective', 'image/png', filename);
-            
-            showStatus('Photo saved!', 'success', 2000);
-            
-            if (navigator.vibrate) {
-                navigator.vibrate(50);
+            try {
+                sceneEl.components.screenshot.capture('perspective', 'image/png', filename);
+                log(`Screenshot saved: ${filename}`, 'success');
+                showStatus('Photo saved!', 'success', 2000);
+                
+                if (navigator.vibrate) {
+                    navigator.vibrate(50);
+                }
+            } catch (err) {
+                log(`Screenshot error: ${err.message}`, 'error');
+                showStatus('Screenshot failed', 'error', 2000);
             }
         }
 
         buttonEl.addEventListener('click', takeScreenshot);
         buttonEl.addEventListener('touchend', takeScreenshot);
 
+        // Info button
         infoButton.addEventListener('click', () => {
             if (currentPosition) {
                 const distance = calculateDistance(
@@ -568,15 +722,39 @@
             }
         });
 
-        if (checkBrowserSupport()) {
+        // Initialize everything
+        async function init() {
+            log('Starting initialization...', 'info');
+            
+            // Check camera first
+            const cameraOk = await checkCameraPermission();
+            if (!cameraOk) {
+                return;
+            }
+            
+            // Start GPS
             initGPS();
+            
+            // Timeout fallback
+            initTimeout = setTimeout(() => {
+                if (!cameraReady) {
+                    log('Camera initialization timeout - forcing start', 'warn');
+                    loaderMessage.textContent = 'Camera taking too long...';
+                    cameraReady = true;
+                    hideLoader();
+                }
+            }, 15000);
         }
 
+        // Wake lock
         if ('wakeLock' in navigator) {
             navigator.wakeLock.request('screen').catch(err => {
-                console.log('Wake Lock:', err);
+                log(`Wake Lock error: ${err.message}`, 'warn');
             });
         }
+
+        // Start
+        init();
     </script>
 </body>
 </html>
